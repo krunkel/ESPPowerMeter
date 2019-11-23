@@ -74,7 +74,7 @@ int CS5460CountMn = 0;
 long CS5460CountDay = 0;  // 
 const float CS5460VtDivide = 46700.00; 
 const float CS5460CtDivide = 243000.00;   
-const float CS5460PwDivide = 325.00;   // 332 > 316 > 321 > 323 > 320 > 325
+const float CS5460PwDivide = 326.00;   // 332 > 316 > 321 > 323 > 320 > 325 > 326
 const float CS5460CtOffset = 0.00;   // was 200
 
 //=====================================================================================================================
@@ -85,7 +85,7 @@ DynamicJsonDocument jsonDoc(2048);
 AsyncWebServer server(80);
 
 const char* ssid = "thuis1";
-const char* password = "xxxxxxxx";
+const char* password = "xxx";
 const char* hostName = "esppower";
 
 unsigned long last5000; 
@@ -133,7 +133,7 @@ uint64_t ADSLastZC[32];  // Zerocross at time of measurement
 float ADS_Current[2] = {0,0};
 float ADS_Appr_Power[2] = {0,0};
 float ADS_Real_Power[2] = {0,0};
-float ADS_Cur_Divide[2] = {3000,3000};// For RMS value (=) Sqrt(32) * ADS factor * 
+float ADS_Cur_Divide[2] = {3000,3050};// For RMS value (=) Sqrt(32) * ADS factor * 
 // Used Current Transformer = 1/2000
 // Range: 0-20A - 20 A = max 28,28A PP = 
 // Burden = 84 Ohm > max 1,19V PP    1 A = 0,042V (20)
@@ -343,6 +343,12 @@ void ReadStateFromSpiffs() {
       HouseECount = jsonDoc["HouseECount"];
       ADS0ECount = jsonDoc["ADS0ECount"];
       ADS1ECount = jsonDoc["ADS1ECount"];
+      if (jsonDoc.containsKey("ECntDay")) {
+        HouseECountDay =  jsonDoc["ECntDay"];
+        ADS0ECountDay = jsonDoc["ECntDay0"];
+        ADS1ECountDay = jsonDoc["ECntDay1"];
+        CS5460CountDay = jsonDoc["ECnt"];
+      }
     } else {
       ADS1ECount = ADS0ECount = HouseECount = 0;
     }
@@ -363,6 +369,10 @@ void WriteStateToSpiffs() { // const char *filename, const Config &config) {
     jsonDoc["HouseECount"] = HouseECount;
     jsonDoc["ADS0ECount"] = ADS0ECount;
     jsonDoc["ADS1ECount"] = ADS1ECount;
+    jsonDoc["ECntDay"] = HouseECountDay;
+    jsonDoc["ECntDay0"] = ADS0ECountDay;
+    jsonDoc["ECntDay1"] = ADS1ECountDay;
+    jsonDoc["ECnt"] = CS5460CountDay;
     serializeJson(jsonDoc, file);
   }
   file.close();
@@ -877,25 +887,22 @@ void Do1Min() {
       yield();
       send2nodered();
       MinuteCount++;
-      if (MinuteCount == 5) {
+      if (MinuteCount == 15) {
         yield();
         WriteStateToSpiffs();
         MinuteCount = 0;
       }
     } else {
-      CS5460_spi_start();
-      CS5460Status = CS5460_readReg(CS5460_REG_STATUS);  //powerMeter.getStatus();
-      SPI.endTransaction();
-      SendEvent2nodered("CS5460 Restart Stat=" + String(CS5460Status));
-      CS5460_re_init();
+      CS5460_CheckState();
+      // CS5460_spi_start();
+      // CS5460Status = CS5460_readReg(CS5460_REG_STATUS);  //powerMeter.getStatus();
+      // SPI.endTransaction();
+      // SendEvent2nodered("CS5460 Restart Stat=" + String(CS5460Status));
+      // CS5460_re_init();
     }
   } else {
     if (millis() > 40000) {
-      CS5460_spi_start();
-      CS5460Status = CS5460_readReg(CS5460_REG_STATUS);  //powerMeter.getStatus();
-      SPI.endTransaction();
-      SendEvent2nodered("CS5460 Restart Stat=" + String(CS5460Status));
-      CS5460_re_init();
+      CS5460_CheckState();
     }
   }
   LastCountMn = CS5460CountMn;
