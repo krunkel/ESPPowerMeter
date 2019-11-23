@@ -55,8 +55,8 @@ long lastLoopCount = 0;
 #define CS5460_CMD_CONTCONVERT  0xE8
 #define CS5460_STATUS_DRDY      0x00800000L
 #define CS5460_STATUS_ERROR     0x000BF800L   // Error flags
-const uint8_t CS5460_CS = 15;
-const uint8_t PIN_CS5460_INT = 2;
+const uint8_t CS5460_CS = 15;      // D8 op D1 Mini
+const uint8_t PIN_CS5460_INT = 2;  // D4 op D1 Mini
 
 union int32Data {
 	uint32_t data32;
@@ -136,7 +136,7 @@ float ADS_Real_Power[2] = {0,0};
 float ADS_Cur_Divide[2] = {3000,3000};// For RMS value (=) Sqrt(32) * ADS factor * 
 // Used Current Transformer = 1/2000
 // Range: 0-20A - 20 A = max 28,28A PP = 
-// Burden = 84Ohm > max 1,19V PP    1 A = 0,042V (20)
+// Burden = 84 Ohm > max 1,19V PP    1 A = 0,042V (20)
 // ADS Gain 2 = max 2V PP - Birresolution = 0.0625mV
 // 1A = 42mv/ = 672 
 // float ADS_Cur_Offset[2] = {0,0}; 
@@ -147,8 +147,8 @@ double ADS_CosPhiSum[2] = {0,0};
 double ADS_CosPhiAvg[2] = {1,1};
 //int ADS_CosPhiDelta[2];
 bool ADS_CosPhiAvgOK[2] = {false,false};
-const int ADS_ZCCorrection[2] = {1200,1100};  //1150,1000 op 4/11 // 1600 on 3/11/2019    -   Zonnepanelen brengen 
-uint64_t ADS_ZeroCross[2] = {0,0};  // Calculated after 32 measurements
+const int ADS_ZCCorrection[2] = {1200,1100};   // compensation for CT & ZeroCross measurement shift
+uint64_t ADS_ZeroCross[2] = {0,0};             // Calculated after 32 measurements
 uint64_t ADS_LastZeroCross[2] = {0,0};
 uint64_t ADS_MeanZeroCross[2] = {0,0};
 //String LDebugADSVal[2];
