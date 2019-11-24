@@ -784,7 +784,7 @@ void ZCProcess()  {
   if ((LastCycle < 21000) && (LastCycle > 19000))  {    // We missed a cycle - or spike - do not process
     if ((TZeroCross-MeanZeroCross) > 5000 ) {
         MeanZeroCross = TZeroCross; 
-    } else {
+    } else {                                            // TODO optimize 
       if (MeanZeroCross > TZeroCross) {
           MeanZeroCross-= sqrt(MeanZeroCross - TZeroCross); 
       } else {
