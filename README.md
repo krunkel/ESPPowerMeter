@@ -19,9 +19,13 @@ ESP8266 based powermeter with following characteristics:
 
 PowerMeter output will be used in my ESP32 based 'SmartCarCharge' project (A Smart Level 2 Car Charger)
 
-Project is still in development. Any suggestion on optimalisation are welcome!
+Project is still in development. Error after calibration is less then 1% (Reasoned guess since I don't have calibrated measuring equipment available).  Any suggestion on optimalisation are welcome!
 
 Hardware: ESPPowermeter.jpg
 
 ![ESPPowermeter.jpg](./ESPPowermeter.jpg)
+
+Example dashboard Grafana: Grafana.png
+
+![Grafana.png](./Grafana.png)
 
