@@ -16,6 +16,7 @@ ESP8266 based powermeter with following characteristics:
     - Simple circuit using voltage of transformer, resistor and opto coupler.
 4. Integrated webserver to present som json files (to be used in other projects).
 5. Output is send to Nodered (and from nodered to InfluxDB and Grafana).
+6. Solar Output is send to pvoutput.org
 
 PowerMeter output will be used in my ESP32 based 'SmartCarCharge' project (A Smart Level 2 Car Charger)
 

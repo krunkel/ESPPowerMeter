@@ -15,6 +15,7 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 
+#include <Time.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
@@ -30,6 +31,8 @@ const char BU_State[] = "/statebu.json";
 
 long LoopCount = 0;
 long lastLoopCount = 0;
+
+tm timeinfo;
 //=====================================================================================================================
 //===== CS5460 ======== CS5460 code inspired by https://github.com/xxzl0130/CS5460 ====================================
 //=====================================================================================================================
@@ -85,7 +88,7 @@ DynamicJsonDocument jsonDoc(2048);
 AsyncWebServer server(80);
 
 const char* ssid = "thuis1";
-const char* password = "xxx";
+const char* password = "xxxxxxx";
 const char* hostName = "esppower";
 
 unsigned long last5000; 
@@ -95,6 +98,8 @@ byte lastMinute = 0;
 byte lastHour = 0;
 byte lastDay = 9;
 byte MinuteCount = 0;
+byte lastPVOutput = 99;
+
 
 float HouseVoltage;
 float HouseCurrent;
@@ -180,8 +185,6 @@ byte CyclePnt = 0;
 // ################### ThingSpeak ###################
 // Free: 8K / dag - 5 per minuut
 // Start: 1 / minuut
-// Write "F9ANAIPYP1M4YTWW"
-// Read "VMLL1YPFIYKGDERH"
 // Field 1 NetVoltage
 // Field 2 CurrentHome
 // Field 3 PowerHome
@@ -190,16 +193,23 @@ byte CyclePnt = 0;
 // Field 6 PowerCar
 // Field 7 DayECount
 // Field 8 
-unsigned long MnChannelNumber = 860156;
-const char * MnWriteAPIKey = "F9ANAIPYP1M4YTWW";
-unsigned long HrChannelNumber = 863999;
-const char * HrWriteAPIKey = "M4RS5QSX5A6D5ZKS";
+// unsigned long MnChannelNumber = 860156;
+// const char * MnWriteAPIKey = "xxx";
+// unsigned long HrChannelNumber = 863999;
+// const char * HrWriteAPIKey = "xxx";
+
+// ################### PVOutput ###################
+const char * PVO_Url = "http://pvoutput.org/service/r2/addstatus.jsp";
+const char * PVO_Apikey = "ca661b993ba97d8573838faed3180aae14c5c9e3";
+const char * PVO_SystemId = "59811";
+const char * PVO_ContType = "application/x-www-form-urlencoded";
 
 WiFiUDP ntpUDP;
 //NTPClient timeClient(ntpUDP);
 NTPClient timeClient(ntpUDP,"be.pool.ntp.org",3600);   //Zomertijd: NTPClient timeClient(ntpUDP,"be.pool.ntp.org",7200);
 WiFiClient TS_client;
 WiFiClient NR_client;
+WiFiClient PV_client;
 
 IPAddress staticIP(192, 168, 1, 50); //ESP static ip
 IPAddress gateway(192, 168, 1, 1);   //IP Address of your WiFi Router (Gateway)
@@ -252,11 +262,11 @@ void ADSStart() {
 //=====================================================================================================================
 void ADSProcess() {   // Process 32 measurements - triggered by ReadADSTimer interrupt
   ADSCount--;
-  if (ADSCount < 32) {// enkel laatste 32  - 32 * 
+  if (ADSCount < 32) {// only last 32 sample moments
     //===== Get measurement & clock in micros =========================================================================
     ADSClock[ADSCount] = micros64();
     ADSValue[ADSCount] = ads.getLastConversionResults();
-    ADSLastZC[ADSCount] = MeanZeroCross;
+    ADSLastZC[ADSCount] = MeanZeroCross; // Remember voltage ZeroCross on sample moment for powerfactor calculation
     if (ADSCount == 0) {     // Last measurement passed;
       timer1_disable();
       yield();
@@ -448,6 +458,47 @@ void SendEvent2nodered(String EventString) {
     lastEvent = millis();
 	}
 }
+
+//=====================================================================================================================
+//===== Send Solar Data to pvoutput.org ===============================================================================
+//=====================================================================================================================
+void SendData2PVOutput() {
+  time_t now = timeClient.getEpochTime();
+  char cTime[8]; 
+  char cDate[10]; 
+  strftime(cTime, sizeof(cTime), "%H:%M", &timeinfo);
+  strftime(cDate, sizeof(cDate), "%Y%m%d", &timeinfo);
+  if (ADS0ECountDay > 0) {
+    float WhADS0 = ADS0ECountDay / 1000.00;
+    http.begin(PV_client,PVO_Url);
+	  http.addHeader("X-Pvoutput-Apikey", PVO_Apikey);
+	  http.addHeader("X-Pvoutput-SystemId", PVO_SystemId);
+	  http.addHeader("Content-Type", PVO_ContType);
+   	String postMsg = String("d=") + String(cDate);
+  	postMsg += String("&t=") + String(cTime);
+  	postMsg += String("&v1=") + String(WhADS0,2);
+  	postMsg += String("&v2=") + String(PowerSol1Mn,2);
+		http.POST(postMsg);  // int httpCode = 
+		http.end();
+  }
+  /*
+  if (ADS1ECountDay > 0) {
+    float WhADS1 = ADS1ECountDay / 1000.00;
+    http.begin(PV_client,PVO_Url);
+	  http.addHeader("X-Pvoutput-Apikey", PVO_Apikey);
+	  http.addHeader("X-Pvoutput-SystemId", PVO_SystemId);
+	  http.addHeader("Content-Type", PVO_ContType);
+   	String postMsg = String("d=") + String(cDate);
+  	postMsg += String("&t=") + String(cTime);
+  	postMsg += String("&v1=") + String(WhADS1,2);
+  	postMsg += String("&v2=") + String(PowerSol2Mn,2);
+		http.POST(output);  // int httpCode = 
+		http.end();
+  }
+  */
+  lastPVOutput = lastMinute;
+}
+
 
 //#####################################################################################################################
 //##### CS5460 stuff ##################################################################################################
@@ -905,6 +956,7 @@ void Do1Min() {
       CS5460_CheckState();
     }
   }
+  if (((lastMinute % 5) == 0) && (lastMinute != lastPVOutput)) SendData2PVOutput;
   LastCountMn = CS5460CountMn;
   CS5460CountMn = 0;
   CS5460PowerMn = 0;
@@ -954,6 +1006,7 @@ void Do1Day() {
 //#####################################################################################################################
 //##### LOOP ##########################################################################################################
 //#####################################################################################################################
+//# LoopCount used to monitor load / with current setup: +/- 8000 per sec
 void loop(){
   if(IRReadADS) ADSProcess();        // Read ADS1115 (timed)
   if(TZeroCross > 0) ZCProcess();    // Voltage ZeroCross detected -> Process
