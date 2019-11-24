@@ -88,8 +88,8 @@ HTTPClient http;
 DynamicJsonDocument jsonDoc(2048);
 AsyncWebServer server(80);
 
-const char* ssid = MYSID;
-const char* password = MYPW;
+const char* ssid = MYSID;       // defined in ConfigRogge.h
+const char* password = MYPW;    // defined in ConfigRogge.h
 const char* hostName = "esppower";
 
 unsigned long last5000; 
@@ -202,8 +202,8 @@ byte CyclePnt = 0;
 
 // ################### PVOutput ###################
 const char * PVO_Url = "http://pvoutput.org/service/r2/addstatus.jsp";
-const char * PVO_Apikey = MYPVOAPI;
-const char * PVO_SystemId = MYPVOSYS1;
+const char * PVO_Apikey = MYPVOAPI;     // defined in ConfigRogge.h
+const char * PVO_SystemId = MYPVOSYS1;  // defined in ConfigRogge.h
 const char * PVO_ContType = "application/x-www-form-urlencoded";
 
 WiFiUDP ntpUDP;
@@ -480,8 +480,12 @@ void SendData2PVOutput() {
   	postMsg += String("&t=") + String(cTime);
   	postMsg += String("&v1=") + String(WhADS0,2);
   	postMsg += String("&v2=") + String(PowerSol1Mn,2);
-		http.POST(postMsg);  // int httpCode = 
-		http.end();
+		int httpCode = http.POST(postMsg);  
+		String payload = http.getString();  
+    http.end();
+    yield();
+    postMsg += String(" -- ") + String(httpCode);
+    postMsg += String(" ") + payload;
     SendEvent2nodered(postMsg);
   }
   /*
