@@ -14,6 +14,7 @@
 
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <ConfigRogge.h>
 
 #include <Time.h>
 #include <NTPClient.h>
@@ -87,19 +88,20 @@ HTTPClient http;
 DynamicJsonDocument jsonDoc(2048);
 AsyncWebServer server(80);
 
-const char* ssid = "thuis1";
-const char* password = "xxxxxxx";
+const char* ssid = MYSID;
+const char* password = MYPW;
 const char* hostName = "esppower";
 
 unsigned long last5000; 
 unsigned long last1000; 
 unsigned long lastEvent = 0;
+byte numEvents = 0;
 byte lastMinute = 0;
 byte lastHour = 0;
 byte lastDay = 9;
 byte MinuteCount = 0;
 byte lastPVOutput = 99;
-
+bool FirstNTP = true; 
 
 float HouseVoltage;
 float HouseCurrent;
@@ -200,8 +202,8 @@ byte CyclePnt = 0;
 
 // ################### PVOutput ###################
 const char * PVO_Url = "http://pvoutput.org/service/r2/addstatus.jsp";
-const char * PVO_Apikey = "ca661b993ba97d8573838faed3180aae14c5c9e3";
-const char * PVO_SystemId = "59811";
+const char * PVO_Apikey = MYPVOAPI;
+const char * PVO_SystemId = MYPVOSYS1;
 const char * PVO_ContType = "application/x-www-form-urlencoded";
 
 WiFiUDP ntpUDP;
@@ -353,12 +355,10 @@ void ReadStateFromSpiffs() {
       HouseECount = jsonDoc["HouseECount"];
       ADS0ECount = jsonDoc["ADS0ECount"];
       ADS1ECount = jsonDoc["ADS1ECount"];
-      if (jsonDoc.containsKey("ECntDay")) {
-        HouseECountDay =  jsonDoc["ECntDay"];
-        ADS0ECountDay = jsonDoc["ECntDay0"];
-        ADS1ECountDay = jsonDoc["ECntDay1"];
-        CS5460CountDay = jsonDoc["ECnt"];
-      }
+      HouseECountDay =  jsonDoc["ECntDay"];
+      ADS0ECountDay = jsonDoc["ECntDay0"];
+      ADS1ECountDay = jsonDoc["ECntDay1"];
+      CS5460CountDay = jsonDoc["ECnt"];
     } else {
       ADS1ECount = ADS0ECount = HouseECount = 0;
     }
@@ -445,7 +445,7 @@ void send2noderedDay() {
 //===== Send Event to Node-Red server =================================================================================
 //=====================================================================================================================
 void SendEvent2nodered(String EventString) {
-	if((millis()-lastEvent) > 200) {   // Max 5 events per sec
+	if(numEvents<4) {   // Max 4 events per sec
 		String output;
 		jsonDoc.clear();
 		jsonDoc["node"] = "esppower"; 
@@ -456,6 +456,7 @@ void SendEvent2nodered(String EventString) {
 		http.POST(output);  // int httpCode = 
 		http.end();
     lastEvent = millis();
+    numEvents++;
 	}
 }
 
@@ -466,9 +467,10 @@ void SendData2PVOutput() {
   time_t now = timeClient.getEpochTime();
   char cTime[8]; 
   char cDate[10]; 
+  localtime_r(&now, &timeinfo);
   strftime(cTime, sizeof(cTime), "%H:%M", &timeinfo);
   strftime(cDate, sizeof(cDate), "%Y%m%d", &timeinfo);
-  if (ADS0ECountDay > 0) {
+  if ((ADS0ECountDay > 5000) && (PowerSol1Mn > 10)) {
     float WhADS0 = ADS0ECountDay / 1000.00;
     http.begin(PV_client,PVO_Url);
 	  http.addHeader("X-Pvoutput-Apikey", PVO_Apikey);
@@ -480,6 +482,7 @@ void SendData2PVOutput() {
   	postMsg += String("&v2=") + String(PowerSol1Mn,2);
 		http.POST(postMsg);  // int httpCode = 
 		http.end();
+    SendEvent2nodered(postMsg);
   }
   /*
   if (ADS1ECountDay > 0) {
@@ -496,7 +499,7 @@ void SendData2PVOutput() {
 		http.end();
   }
   */
-  lastPVOutput = lastMinute;
+  //lastPVOutput = lastMinute;
 }
 
 
@@ -889,6 +892,7 @@ void DoTik1() {
   }
   lastLoopCount = LoopCount;
   LoopCount = 0;
+  numEvents = 0;
   last1000 = millis();
 }
 // ================================================================================================
@@ -956,7 +960,8 @@ void Do1Min() {
       CS5460_CheckState();
     }
   }
-  if (((lastMinute % 5) == 0) && (lastMinute != lastPVOutput)) SendData2PVOutput;
+  //int tmp = lastMinute;
+  if ((lastMinute % 5) == 0) SendData2PVOutput();
   LastCountMn = CS5460CountMn;
   CS5460CountMn = 0;
   CS5460PowerMn = 0;
@@ -996,10 +1001,12 @@ void Do1Day() {
   } else {
     SendEvent2nodered("Te weinig metingen dag:" + String(CS5460CountDay));
   }
-  HouseECountDay = 0;
-  ADS0ECountDay = 0;
-  ADS1ECountDay = 0;
-  CS5460CountDay = 0;
+  if (millis() > 100000) {
+    HouseECountDay = 0;
+    ADS0ECountDay = 0;
+    ADS1ECountDay = 0;
+    CS5460CountDay = 0;
+  }
   lastDay = timeClient.getDay();
 }
 
@@ -1026,6 +1033,11 @@ void loop(){
     if ((millis()-last5000) > 5000) DoTik5();
     yield();
     if (timeClient.getEpochTime() > 1546300800) { // Anders geen NTP
+      if (FirstNTP) {
+        lastHour = timeClient.getHours();
+        lastDay = timeClient.getDay();
+        FirstNTP = false;
+      }
       if (timeClient.getMinutes() != lastMinute) Do1Min();
       yield();
       if (timeClient.getHours() != lastHour) Do1Hour();
