@@ -4,6 +4,9 @@
 #include <FS.h>
 #include <ESPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <asyncHTTPrequest.h>       // ESP8266HTTPClient.h  is blocking
+// #include <ESP8266HTTPClient.h>   
+// #include <WiFiClient.h>
 #include <ArduinoJson.h>
 #include <stdint.h>
 #include <SPI.h>
@@ -12,8 +15,6 @@
 
 //#include <ThingSpeak.h>
 
-#include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>
 #include <ConfigRogge.h>
 
 #include <Time.h>
@@ -84,7 +85,11 @@ const float CS5460CtOffset = 0.00;   // was 200
 //=====================================================================================================================
 //===== IP/WEB/JSON ===================================================================================================
 //=====================================================================================================================
-HTTPClient http;
+asyncHTTPrequest NRM_http_req;
+asyncHTTPrequest NRD_http_req;
+asyncHTTPrequest NRE_http_req;
+asyncHTTPrequest PVO_http_req;
+// HTTPClient http;
 DynamicJsonDocument jsonDoc(2048);
 AsyncWebServer server(80);
 
@@ -102,6 +107,7 @@ byte lastDay = 9;
 byte MinuteCount = 0;
 byte lastPVOutput = 99;
 bool FirstNTP = true; 
+bool Q_SaveStat = false; 
 
 float HouseVoltage;
 float HouseCurrent;
@@ -150,11 +156,12 @@ float ADS_Cur_Divide[2] = {3000,3050};// For RMS value (=) Sqrt(32) * ADS factor
 int ADS_PowerCountMn[2] = {0,0}; // Normally 30 measurements / minute
 double ADS_CosPhi[32][2];            // buffers for running average
 byte ADS_CosPhiPnt[2];            // Pointer to next place in buffer for running average
+int ADS_Shift[2]; // for callibration
 double ADS_CosPhiSum[2] = {0,0};
 double ADS_CosPhiAvg[2] = {1,1};
 //int ADS_CosPhiDelta[2];
 bool ADS_CosPhiAvgOK[2] = {false,false};
-const int ADS_ZCCorrection[2] = {1200,1100};   // compensation for CT & ZeroCross measurement shift
+const int ADS_ZCCorrection[2] = {1150,1100};   // compensation for CT & ZeroCross measurement shift  
 uint64_t ADS_ZeroCross[2] = {0,0};             // Calculated after 32 measurements
 uint64_t ADS_LastZeroCross[2] = {0,0};
 uint64_t ADS_MeanZeroCross[2] = {0,0};
@@ -209,9 +216,8 @@ const char * PVO_ContType = "application/x-www-form-urlencoded";
 WiFiUDP ntpUDP;
 //NTPClient timeClient(ntpUDP);
 NTPClient timeClient(ntpUDP,"be.pool.ntp.org",3600);   //Zomertijd: NTPClient timeClient(ntpUDP,"be.pool.ntp.org",7200);
-WiFiClient TS_client;
-WiFiClient NR_client;
-WiFiClient PV_client;
+//WiFiClient NR_client;  - changed to asyncHTTPrequest
+//WiFiClient PV_client;
 
 IPAddress staticIP(192, 168, 1, 50); //ESP static ip
 IPAddress gateway(192, 168, 1, 1);   //IP Address of your WiFi Router (Gateway)
@@ -222,6 +228,7 @@ IPAddress dns(8, 8, 8, 8);  //DNS
 volatile byte IRReadADS = false; 
 volatile byte IRReadCS5460 = false; 
 unsigned long LastCS5460=0;
+uint16_t NRErrors = 0;
 
 //#######################################################################################################################################
 //##### Interruptroutines ###############################################################################################################
@@ -297,6 +304,7 @@ void ADSProcess() {   // Process 32 measurements - triggered by ReadADSTimer int
         ADS_LastZeroCross[ADSChannel] = ADS_ZeroCross[ADSChannel];  
         ADS_ZeroCross[ADSChannel] = MyZeroCross;
         int ThisShift = (MyZeroCross-ADSLastZC[cntZC]+CycleAvg)%CycleAvg;  // ADSLastZC[cntZC] = MeanZeroCross at zerocros - Attention Mod from negative not ok so, extra CycleAvg  ???
+        ADS_Shift[ADSChannel] = ThisShift;
         double ThisCos = cos(ThisShift * TWO_PI / CycleAvg);
         //=== calculate running average ===
         ADS_CosPhiSum[ADSChannel]-=ADS_CosPhi[ADS_CosPhiPnt[ADSChannel]][ADSChannel];
@@ -409,10 +417,11 @@ void send2nodered() {
   jsonDoc["pf_sol2"] = (float) ADS_CosPhiAvg[1] * 100;
   jsonDoc["frequency"] = (float) Frequency;
   serializeJson(jsonDoc, output);
-  http.begin(NR_client,"http://192.168.1.100:1880/housepower");
-  http.addHeader("Content-Type", "application/json");  
-  http.POST(output);   // int httpCode = als check returncode
-  http.end();
+  if(NRM_http_req.readyState() == 0 || NRM_http_req.readyState() == 4) {
+      NRM_http_req.open("POST", "http://192.168.1.100:1880/housepower");
+      NRM_http_req.setReqHeader("Content-Type", "application/json");
+      NRM_http_req.send(output);
+  }
 }
 
 //=====================================================================================================================
@@ -429,17 +438,11 @@ void send2noderedDay() {
   jsonDoc["power_sol1"] = (float) WhADS0;
   jsonDoc["power_sol2"] = (float) WhADS1;
   serializeJson(jsonDoc, output);
-  http.begin(NR_client,"http://192.168.1.100:1880/housepower_day");
-  http.addHeader("Content-Type", "application/json");  
-  http.POST(output); // int httpCode = 
-  http.end();
-  //#ifdef SER_DBG_ON
-  //  if(httpCode == 204) {
-  //    SER_DBG.println("Data successfully sent.");
-  //  }else{
-  //    SER_DBG.println("Data were not sent. Check network connection.");
-  //  }
-  //#endif
+  if(NRD_http_req.readyState() == 0 || NRD_http_req.readyState() == 4) {
+      NRD_http_req.open("POST", "http://192.168.1.100:1880/housepower_day");
+      NRD_http_req.setReqHeader("Content-Type", "application/json");
+      NRD_http_req.send(output);
+  }
 }
 //=====================================================================================================================
 //===== Send Event to Node-Red server =================================================================================
@@ -450,11 +453,12 @@ void SendEvent2nodered(String EventString) {
 		jsonDoc.clear();
 		jsonDoc["node"] = "esppower"; 
 		jsonDoc["event"] = EventString; 
-		serializeJson(jsonDoc, output);
-		http.begin(NR_client,"http://192.168.1.100:1880/event");
-		http.addHeader("Content-Type", "application/json");  
-		http.POST(output);  // int httpCode = 
-		http.end();
+    serializeJson(jsonDoc, output);
+    if(NRE_http_req.readyState() == 0 || NRE_http_req.readyState() == 4) {
+        NRE_http_req.open("POST", "http://192.168.1.100:1880/event");
+        NRE_http_req.setReqHeader("Content-Type", "application/json");
+        NRE_http_req.send(output);
+    }
     lastEvent = millis();
     numEvents++;
 	}
@@ -472,21 +476,17 @@ void SendData2PVOutput() {
   strftime(cDate, sizeof(cDate), "%Y%m%d", &timeinfo);
   if ((ADS0ECountDay > 5000) && (PowerSol1Mn > 10)) {
     float WhADS0 = ADS0ECountDay / 1000.00;
-    http.begin(PV_client,PVO_Url);
-	  http.addHeader("X-Pvoutput-Apikey", PVO_Apikey);
-	  http.addHeader("X-Pvoutput-SystemId", PVO_SystemId);
-	  http.addHeader("Content-Type", PVO_ContType);
-   	String postMsg = String("d=") + String(cDate);
-  	postMsg += String("&t=") + String(cTime);
-  	postMsg += String("&v1=") + String(WhADS0,2);
-  	postMsg += String("&v2=") + String(PowerSol1Mn,2);
-		int httpCode = http.POST(postMsg);  
-		String payload = http.getString();  
-    http.end();
-    yield();
-    postMsg += String(" -- ") + String(httpCode);
-    postMsg += String(" ") + payload;
-    SendEvent2nodered(postMsg);
+    if(PVO_http_req.readyState() == 0 || PVO_http_req.readyState() == 4) {
+        PVO_http_req.open("POST", PVO_Url);
+        PVO_http_req.setReqHeader("X-Pvoutput-Apikey", PVO_Apikey);
+        PVO_http_req.setReqHeader("X-Pvoutput-SystemId", PVO_SystemId);
+        PVO_http_req.setReqHeader("Content-Type", PVO_ContType);
+        String postMsg = String("d=") + String(cDate);
+        postMsg += String("&t=") + String(cTime);
+        postMsg += String("&v1=") + String(WhADS0,2);
+        postMsg += String("&v2=") + String(PowerSol1Mn,2);
+        PVO_http_req.send(postMsg);
+    }
   }
   /*
   if (ADS1ECountDay > 0) {
@@ -506,6 +506,42 @@ void SendData2PVOutput() {
   //lastPVOutput = lastMinute;
 }
 
+//#####################################################################################################################
+//##### Async Webclient stuf ##########################################################################################
+//#####################################################################################################################
+void PVOreqResponse(void* optParm, asyncHTTPrequest* PVO_http_req, int readyState) {
+  if(readyState == 4) {
+    if (PVO_http_req->responseHTTPcode() != 200) {
+      String ReturnMsg = String("Returncode pvoutput:") + String(PVO_http_req->responseHTTPcode());
+      ReturnMsg += String(" ") + PVO_http_req->responseText();
+      SendEvent2nodered(ReturnMsg);
+    }
+  }
+}
+void NRMreqResponse(void* optParm, asyncHTTPrequest* NRM_http_req, int readyState) {
+  if(readyState == 4) {
+    if (NRM_http_req->responseHTTPcode() != 200) {
+      NRErrors++;  
+      //String ReturnMsg = String("Returncode NR Min:") + String(NRM_http_req->responseHTTPcode());
+      //ReturnMsg += String(" ") + NRM_http_req->responseText();
+      //SendEvent2nodered(ReturnMsg);
+    }
+  }
+}
+void NRDreqResponse(void* optParm, asyncHTTPrequest* NRD_http_req, int readyState) {
+  if(readyState == 4) {
+    if (NRD_http_req->responseHTTPcode() != 200) {
+      NRErrors++;  
+    }
+  }
+}
+void NREreqResponse(void* optParm, asyncHTTPrequest* NRE_http_req, int readyState) {
+  if(readyState == 4) {
+    if (NRE_http_req->responseHTTPcode() != 200) {
+      NRErrors++;  
+    }
+  }
+}
 
 //#####################################################################################################################
 //##### CS5460 stuff ##################################################################################################
@@ -650,6 +686,11 @@ void WebSetup() {
   server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "text/plain", String(ESP.getFreeHeap()));
   });
+  server.on("/savestat", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain","Ok!" );
+    Q_SaveStat = true;
+  });
+
   //===================================================================================================================
   //server.on("/debug", HTTP_GET, [](AsyncWebServerRequest *request){
   //  request->send(200, "text/plain", LDebugADSVal[0] + "\n" + LDebugADSMcr[0] +"\n"+ LDebugADSVal[1] + "\n" + LDebugADSMcr[1] +"\n");
@@ -661,6 +702,8 @@ void WebSetup() {
     jsonDoc.clear();
     jsonDoc["CSStat"] = CS5460Status;
     jsonDoc["Delta"] = (int)(LastMeanZeroCross - LastZeroCross);
+    jsonDoc["Shift1"] = ADS_Shift[0];
+    jsonDoc["Shift2"] = ADS_Shift[1];
     //jsonDoc["Shift1"] = ADS_CosPhiAvg[0];
     //jsonDoc["Shift2"] = ADS_CosPhiAvg[1];
     //jsonDoc["Delta1"] = ADS_CosPhiDelta[0];
@@ -669,6 +712,8 @@ void WebSetup() {
     jsonDoc["PF2"] = ADS_CosPhiAvg[1];
     jsonDoc["AvgCycle"] = CycleAvg;
     jsonDoc["CS5460CountMn"] = LastCountMn;
+    jsonDoc["StateMin"] = MinuteCount;
+    jsonDoc["NRErrors"] = NRErrors;
     jsonDoc["loopcount"] = lastLoopCount;
     serializeJsonPretty(jsonDoc, *response);
     request->send(response);
@@ -827,6 +872,21 @@ void setup(){
   #ifdef SER_DBG_ON
     SER_DBG.println("Einde Setup");
   #endif
+  //===================================================================================================================
+  //=== Async http req setup ==========================================================================================
+  //===================================================================================================================
+  NRM_http_req.setDebug(false);
+  NRM_http_req.setTimeout(5);
+  NRM_http_req.onReadyStateChange(NRMreqResponse);
+  NRD_http_req.setDebug(false);
+  NRD_http_req.setTimeout(5);
+  NRD_http_req.onReadyStateChange(NRDreqResponse);
+  NRE_http_req.setDebug(false);
+  NRE_http_req.setTimeout(5);
+  NRE_http_req.onReadyStateChange(NREreqResponse);
+  PVO_http_req.setDebug(false);
+  PVO_http_req.setTimeout(5);
+  PVO_http_req.onReadyStateChange(PVOreqResponse);
   //===================================================================================================================
   //=== End SETUP =====================================================================================================
   //===================================================================================================================
@@ -1034,6 +1094,11 @@ void loop(){
   //=== ADS measurements each sec from 0 - 750 ms / concentrating other operations between 760 - 1000 =================
   //===================================================================================================================
   else if ((millis()-last1000) > 760) {  
+    if (Q_SaveStat) {
+       WriteStateToSpiffs();
+       MinuteCount = 0;
+       Q_SaveStat = false;
+    }
     if ((millis()-last5000) > 5000) DoTik5();
     yield();
     if (timeClient.getEpochTime() > 1546300800) { // Anders geen NTP
